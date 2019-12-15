@@ -1,18 +1,14 @@
-int func(int t) {
-   
-   int sum = 0;
+
+void main () {
+
+	 int sum = 0;
      int a = 0;
      while(a < 100){
         sum = sum +a;
         ++a;
      }
-   
-   return ++(sum+1);
-}
-
-void main () {
-   int t = 100;  
-   _print(func(t));
+   _print(sum+1);
    
    return;
 }
+

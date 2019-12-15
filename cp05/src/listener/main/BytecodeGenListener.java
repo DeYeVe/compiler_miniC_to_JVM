@@ -1,12 +1,16 @@
 package listener.main;
 
+import java.lang.reflect.Array;
+import java.util.ArrayList;
 import java.util.Hashtable;
+import java.util.StringTokenizer;
 
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ErrorNode;
 import org.antlr.v4.runtime.tree.ParseTreeListener;
 import org.antlr.v4.runtime.tree.ParseTreeProperty;
 import org.antlr.v4.runtime.tree.TerminalNode;
+import org.stringtemplate.v4.compiler.CodeGenerator.includeExpr_return;
 
 import generated.MiniCBaseListener;
 import generated.MiniCParser;
@@ -30,7 +34,166 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 	int label = 0;
 	
 	// program	: decl+
+
+	class basicBlock{
+		int num;
+		int nextLabel = -1;
+		ArrayList<Integer> nextBlockNum = new ArrayList<>();
+		ArrayList<String> lines = new ArrayList<>();
+		
+		public basicBlock(ArrayList<String> lines, int nextLabel) {
+			this.nextLabel = nextLabel;
+			this.lines = lines;
+			this.num = bbCount++;
+		}
+		public basicBlock(ArrayList<String> lines) {
+			this.lines = lines;
+			this.num = bbCount++;
+		}
+		public basicBlock() {
+			this.num = bbCount++;
+			}
+	} // Basic Block 클래스
 	
+	int bbCount = 0; //Basic Block 수
+
+	ArrayList<basicBlock> blocks = new ArrayList<>(); //Basic Block들의 집합
+	
+	public void enterFunc() {
+		
+	}
+	
+	public int getBlockNumByLabel(ArrayList<basicBlock> blocks, int Label) {
+		
+		String label = String.valueOf(Label);
+		for(int i=0; i<blocks.size(); i++) {
+			ArrayList<String> lines = blocks.get(i).lines;
+			for(int j=0; j<lines.size(); j++) {
+				if(lines.get(j).contains("label" + label + ":"))
+					return i;
+			}
+		}
+		return 0;
+		
+	}
+	public void buildCFG(MiniCParser.ProgramContext ctx) {
+
+		
+		String text = newTexts.get(ctx);
+		ArrayList<String> lines = new ArrayList<>();
+		StringTokenizer st = new StringTokenizer(text);
+		
+		while(st.hasMoreTokens()) {
+			lines.add((st.nextToken("\n")));
+			
+		}
+
+		basicBlock start = new basicBlock();
+		blocks.add(start);
+		
+		ArrayList<String> buf = new ArrayList<>();
+		
+		while(true) {
+			String s = lines.get(0);
+			buf.add(s);
+			lines.remove(0);
+			
+			if(s.contains(".end method")) {
+				start.lines = buf;
+				break;
+			}
+		} // 파일 시작 블록
+		
+		int index = 0;
+		for(int i=0; i<lines.size(); i++) {
+			if(lines.get(i).contains(".method public static main([Ljava/lang/String;)V"))
+				index = i;
+		} // 메인함수 시작 
+		
+		int indexBuf = 0;
+		while(!lines.isEmpty()) {
+			buf = new ArrayList<>();
+			int size = lines.size();
+			for(int i=index; i<size; i++) {
+				String s = lines.get(index);
+				if((!s.contains("label") || !s.contains(":")) || i==0) {
+					buf.add(s);
+					lines.remove(index);
+				} //label?: 이 아닌경우 해당 line을 추출해 버퍼에 저장
+				
+				if(s.contains("label") && !s.contains(":")) {
+					int nextL = Integer.parseInt(s.substring(10));
+					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
+					basicBlock bb = new basicBlock(buf, nextL);
+					blocks.add(bb);
+					indexBuf = 0;
+					break;
+				}//goto, ifne 등등 목적지 label이 있는 분기문 만날경우, bb 컷
+				
+				else if(s.contains("label") && s.contains(":") && (i!=0)){ 
+					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
+					basicBlock bb = new basicBlock(buf);
+					blocks.add(bb);
+					indexBuf = 0;
+					break;
+				}//label?: 을 만날경우 그 이전 라인까지 bb 컷, 그 이전 bb처리 했을경우 bb의 시작
+				
+				else if(s.contains("invokestatic Test/")) {
+					enterFunc();
+				}//함수를 만날경우
+				
+				else if(s.contains(".end method")) {
+					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
+					basicBlock bb = new basicBlock(buf);
+					blocks.add(bb);
+					indexBuf = 0;
+					break;
+				}//.end method를 만날경우 함수 종료이므로 bb 컷
+			}
+			index = indexBuf;
+		}
+		
+	
+		for(int i=0; i<blocks.size(); i++) {
+			basicBlock bb = blocks.get(i);
+			if(bb.nextLabel!=-1) {
+				int nextBB = getBlockNumByLabel(blocks, bb.nextLabel);
+				bb.nextBlockNum.add(nextBB);
+			}
+		}
+		
+		System.out.println(newTexts.get(ctx));
+	}
+	
+	public void printCFG(MiniCParser.ProgramContext ctx) {
+		
+		buildCFG(ctx);
+		
+		System.out.println("\n\n\n\n\n\n====================================== Control Flow ======================================\n");
+		for(int i=0; i<blocks.size(); i++) {
+			basicBlock bb = blocks.get(i);
+			System.out.printf(" BB%2d ┏━\n", i);
+			for(int j=0; j<bb.lines.size(); j++){
+				System.out.printf("\t %s\n", bb.lines.get(j));
+			}
+			int maxleng = 0;
+			for(int j=0; j<bb.lines.size(); j++)
+				if(maxleng < bb.lines.get(j).length())
+					maxleng = bb.lines.get(j).length();
+			String space = "";
+			for(int j=0; j<maxleng+1; j++)
+				space += String.format("%2s","");
+			String nb = "";
+			for(int j=0; j<bb.nextBlockNum.size(); j++) {
+				nb += String.format("BB%d ", bb.nextBlockNum.get(j));
+			}
+			if(i+1 < blocks.size())
+				System.out.printf("\t   %s━┛=> %s\n\n\n", space, nb);
+			else
+				System.out.printf("\t   %s━┛//End", space);
+		}
+	}
+
 	@Override
 	public void enterFun_decl(MiniCParser.Fun_declContext ctx) {
 		symbolTable.initFunDecl();
@@ -95,6 +258,8 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		newTexts.put(ctx, classProlog + var_decl + fun_decl);
 		
 		System.out.println(newTexts.get(ctx));
+		
+		printCFG(ctx);
 	}	
 	
 	

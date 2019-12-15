@@ -14,9 +14,11 @@ import org.stringtemplate.v4.compiler.CodeGenerator.includeExpr_return;
 
 import generated.MiniCBaseListener;
 import generated.MiniCParser;
+import generated.MiniCParser.DeclContext;
 import generated.MiniCParser.ExprContext;
 import generated.MiniCParser.Fun_declContext;
 import generated.MiniCParser.Local_declContext;
+import generated.MiniCParser.ParamContext;
 import generated.MiniCParser.ParamsContext;
 import generated.MiniCParser.ProgramContext;
 import generated.MiniCParser.StmtContext;
@@ -32,6 +34,14 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 	
 	int tab = 0;
 	int label = 0;
+	
+	int maxStackSize = 0;
+	int stackSize = 0;
+	public void renewStackSize(int inc) {
+		stackSize += inc;
+		if(maxStackSize < stackSize)
+			maxStackSize = stackSize;
+	}
 	
 	// program	: decl+
 
@@ -161,8 +171,6 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 				bb.nextBlockNum.add(nextBB);
 			}
 		}
-		
-		System.out.println(newTexts.get(ctx));
 	}
 	
 	public void printCFG(MiniCParser.ProgramContext ctx) {
@@ -195,6 +203,21 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 	}
 
 	@Override
+	public void enterDecl(DeclContext ctx) {
+		// TODO Auto-generated method stub
+		renewStackSize(1);
+	}
+	@Override
+	public void enterParam(ParamContext ctx) {
+		// TODO Auto-generated method stub
+		renewStackSize(1);
+	}
+	@Override
+	public void exitParam(ParamContext ctx) {
+		// TODO Auto-generated method stub
+		renewStackSize(-1);
+	}
+	@Override
 	public void enterFun_decl(MiniCParser.Fun_declContext ctx) {
 		symbolTable.initFunDecl();
 		
@@ -207,7 +230,8 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 			symbolTable.putFunSpecStr(ctx);
 			params = (MiniCParser.ParamsContext) ctx.getChild(3);
 			symbolTable.putParams(params);
-		}		
+		}	
+		renewStackSize(1);
 	}
 
 	
@@ -225,6 +249,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		else  { // simple decl
 			symbolTable.putGlobalVar(varName, Type.INT);
 		}
+		renewStackSize(1);
 	}
 
 	
@@ -239,6 +264,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		else  { // simple decl
 			symbolTable.putLocalVar(getLocalVarName(ctx), Type.INT);
 		}	
+		renewStackSize(1);
 	}
 
 	
@@ -275,6 +301,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 				decl += newTexts.get(ctx.fun_decl());
 		}
 		newTexts.put(ctx, decl);
+		renewStackSize(-1);
 	}
 	
 	// stmt	: expr_stmt | compound_stmt | if_stmt | while_stmt | return_stmt
@@ -346,13 +373,15 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 			Fun_decl += newTexts.get(ctx.compound_stmt());
 		}
 		newTexts.put(ctx, Fun_decl); //함수 선언 child 수가 6일경우 앞에 헤더부 추가
+
+		renewStackSize(-1);
 	}
 	
 
 	private String funcHeader(MiniCParser.Fun_declContext ctx, String fname) {
 		return ".method public static " + symbolTable.getFunSpecStr(fname) + "\n"	
-				/*+ "\t"*/ + ".limit stack " 	+ getStackSize(ctx) + "\n"
-				/*+ "\t"*/ + ".limit locals " 	+ getLocalVarSize(ctx) + "\n";
+				/*+ "\t"*/ + ".limit stack " 	+ String.valueOf(maxStackSize+2) + "\n"
+				/*+ "\t"*/ + ".limit locals " 	+ String.valueOf(maxStackSize+2) + "\n";
 				 	
 	}
 	
@@ -368,6 +397,8 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 			// v. initialization => Later! skip now..: 
 		}
 		newTexts.put(ctx, varDecl);
+		
+		renewStackSize(-1);
 	}
 	
 	
@@ -382,6 +413,8 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		}
 		
 		newTexts.put(ctx, varDecl);
+
+		renewStackSize(-1);
 	}
 
 	
@@ -452,6 +485,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		}
 		Return_stmt += ".end method" + "\n";
 		newTexts.put(ctx, Return_stmt);
+		renewStackSize(-1);
 	} // 반환값이 없을경우 return\n을 버퍼에 저장, 반환값이 있고 int 타입인 경우 iload_vid\n ireturn\n  버퍼에 저장. 마지막으로 .end method\n 추가
 
 	

@@ -46,8 +46,8 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 	// program	: decl+
 
 	class basicBlock{
-		int num;
-		int nextLabel = -1;
+		int num; //block 번호, 아직 미사용
+		int nextLabel = -1; //분기로 연결된 다음 label 번호
 		ArrayList<Integer> nextBlockNum = new ArrayList<>();
 		ArrayList<String> lines = new ArrayList<>();
 		
@@ -69,9 +69,21 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 
 	ArrayList<basicBlock> blocks = new ArrayList<>(); //Basic Block들의 집합
 	
-	public void enterFunc() {
-		
+	class range{
+		int start; int end;
 	}
+	public range funcRange (ArrayList<String> lines, String funcName) {
+		range r = new range();
+		for(int i=0; i<lines.size(); i++) {
+			if(lines.get(i).contains(".method public static " + funcName))
+				r.start = i;
+			if(lines.get(i).contains(".end method")) {
+				r.end = i;
+				break;
+			}
+		}
+		return r;
+	} // 함수호출시 호출, 호출된 함수의 시작 라인과 마지막 라인을 반환
 	
 	public int getBlockNumByLabel(ArrayList<basicBlock> blocks, int Label) {
 		
@@ -85,9 +97,9 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		}
 		return 0;
 		
-	}
-	public void buildCFG(MiniCParser.ProgramContext ctx) {
-
+	} // 블럭의 다음 분기 label 정보에 따라서 블럭의 번호를 반환하는 함수
+	
+	public void buildCFG(MiniCParser.ProgramContext ctx) { // Control Flow를 build. BasicBlock 으로 나누고 연결
 		
 		String text = newTexts.get(ctx);
 		ArrayList<String> lines = new ArrayList<>();
@@ -95,8 +107,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 		
 		while(st.hasMoreTokens()) {
 			lines.add((st.nextToken("\n")));
-			
-		}
+		} // jvm code parsing
 
 		basicBlock start = new basicBlock();
 		blocks.add(start);
@@ -112,16 +123,19 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 				start.lines = buf;
 				break;
 			}
-		} // 파일 시작 블록
+		} // 파일 시작 블록 초기화
 		
 		int index = 0;
 		for(int i=0; i<lines.size(); i++) {
 			if(lines.get(i).contains(".method public static main([Ljava/lang/String;)V"))
 				index = i;
-		} // 메인함수 시작 
+		} // 메인함수 시작줄 index, 해당 줄부터 시작
 		
 		int indexBuf = 0;
-		while(!lines.isEmpty()) {
+		int rt = -1; //함수 호출시 return 줄 번호를 저장할 변수
+		int range = 0; //함수 호출시 함수부분의 line 수, return 줄 번호의 변화 offset을 나타냄, 함수가 끝나고 caller로 돌아올 때 rt - range -1 로 계산
+		
+		while(!lines.isEmpty()) { //line 들을 추출해 block 단위로 변환하면서 전부다 변환될때까지 반복
 			buf = new ArrayList<>();
 			int size = lines.size();
 			for(int i=index; i<size; i++) {
@@ -136,7 +150,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
 					basicBlock bb = new basicBlock(buf, nextL);
 					blocks.add(bb);
-					indexBuf = 0;
+					indexBuf = index;
 					break;
 				}//goto, ifne 등등 목적지 label이 있는 분기문 만날경우, bb 컷
 				
@@ -144,19 +158,29 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
 					basicBlock bb = new basicBlock(buf);
 					blocks.add(bb);
-					indexBuf = 0;
+					indexBuf = index;
 					break;
 				}//label?: 을 만날경우 그 이전 라인까지 bb 컷, 그 이전 bb처리 했을경우 bb의 시작
 				
 				else if(s.contains("invokestatic Test/")) {
-					enterFunc();
-				}//함수를 만날경우
+					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
+					basicBlock bb = new basicBlock(buf);
+					blocks.add(bb);
+					
+					String funcName = s.substring(18);
+					range r = funcRange(lines, funcName);
+					rt = index;
+					index = r.start;
+					range = r.end - r.start;
+					break;
+					
+				} //함수를 만날경우, 함수의 시작 위치와 범위, 리턴 위치를 알아낸 후 함수부분 시작
 				
 				else if(s.contains(".end method")) {
 					blocks.get(blocks.size()-1).nextBlockNum.add(bbCount);
 					basicBlock bb = new basicBlock(buf);
 					blocks.add(bb);
-					indexBuf = 0;
+					indexBuf = rt - range -1;
 					break;
 				}//.end method를 만날경우 함수 종료이므로 bb 컷
 			}
@@ -170,7 +194,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 				int nextBB = getBlockNumByLabel(blocks, bb.nextLabel);
 				bb.nextBlockNum.add(nextBB);
 			}
-		}
+		} // BB마다 저장한 다음 BB의 label정보를 가지고 다음 BB를 알아낸 후 연결
 	}
 	
 	public void printCFG(MiniCParser.ProgramContext ctx) {
@@ -200,7 +224,7 @@ public class BytecodeGenListener extends MiniCBaseListener implements ParseTreeL
 			else
 				System.out.printf("\t   %s━┛//End", space);
 		}
-	}
+	} // BB를 차례대로 출력
 
 	@Override
 	public void enterDecl(DeclContext ctx) {
